@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Physics Survival</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #888; }
+        canvas { display: block; image-rendering: pixelated; }
+        #ui {
+            position: absolute; top: 20px; left: 20px;
+            color: #000; font-family: 'Courier New', Courier, monospace;
+            font-size: 28px; font-weight: bold; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">SCORE: <span id="score">0</span></div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreElement = document.getElementById('score');
+
+let width, height, score = 0, gameOver = false;
+const keys = {};
+let obstacles = [];
+
+const player = {
+    x: 0, y: 0, w: 45, h: 60, speed: 7, 
+    dir: 'down', // 'left', 'right', 'up', 'down'
+};
+
+function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+    player.x = width / 2;
+    player.y = height - 150;
+}
+window.addEventListener('resize', resize);
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+resize();
+
+// --- Pixel Man Drawing Logic ---
+function drawPixelMan(ctx, p) {
+    const x = p.x, y = p.y, w = p.w, h = p.h;
+    ctx.save();
+    
+    // Simple Pixel Man Construction
+    ctx.fillStyle = "#2ecc71"; // Green Suit
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 2;
+
+    // Body
+    ctx.fillRect(x + 10, y + 20, 25, 25);
+    ctx.strokeRect(x + 10, y + 20, 25, 25);
+
+    // Head
+    ctx.fillStyle = "#ffdbac"; // Skin tone
+    ctx.fillRect(x + 12, y, 20, 20);
+    ctx.strokeRect(x + 12, y, 20, 20);
+
+    // Eyes based on direction
+    ctx.fillStyle = "black";
+    if (p.dir === 'right') {
+        ctx.fillRect(x + 25, y + 5, 4, 4);
+    } else if (p.dir === 'left') {
+        ctx.fillRect(x + 15, y + 5, 4, 4);
+    } else if (p.dir === 'up') {
+        // No eyes visible from back
+    } else {
+        ctx.fillRect(x + 15, y + 5, 3, 3);
+        ctx.fillRect(x + 26, y + 5, 3, 3);
+    }
+
+    // Legs
+    ctx.fillStyle = "#27ae60";
+    ctx.fillRect(x + 10, y + 45, 10, 15); // Left Leg
+    ctx.fillRect(x + 25, y + 45, 10, 15); // Right Leg
+    
+    ctx.restore();
+}
+
+class Obstacle {
+    constructor() {
+        this.type = ['fridge', 'house', 'stick'][Math.floor(Math.random() * 3)];
+        this.x = Math.random() * (width - 100) + 50;
+        this.y = -200;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = 3 + Math.random() * 3;
+        this.angle = Math.random() * Math.PI;
+        this.va = (Math.random() - 0.5) * 0.1; // Angular velocity
+        this.mass = this.type === 'stick' ? 1 : 5;
+        this.removed = false;
+
+        // Custom properties for visuals
+        if (this.type === 'stick') { this.w = 15; this.h = 160; }
+        if (this.type === 'fridge') { this.w = 60; this.h = 100; }
+        if (this.type === 'house') { this.w = 100; this.h = 100; }
+    }
+
+    getVertices() {
+        let pts = [];
+        if (this.type === 'fridge') {
+            pts = [{x:-30,y:-50},{x:30,y:-50},{x:30,y:50},{x:-30,y:50}];
+        } else if (this.type === 'house') {
+            // Detailed House vertices
+            pts = [{x:-50,y:50},{x:50,y:50},{x:50,y:-10},{x:0,y:-60},{x:-50,y:-10}];
+        } else {
+            // Stick vertices
+            pts = [{x:-8,y:-80},{x:8,y:-80},{x:8,y:80},{x:-8,y:80}];
+        }
+        return pts.map(p => {
+            let rx = p.x * Math.cos(this.angle) - p.y * Math.sin(this.angle);
+            let ry = p.x * Math.sin(this.angle) + p.y * Math.cos(this.angle);
+            return { x: rx + this.x, y: ry + this.y };
+        });
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.angle += this.va;
+        this.vy += 0.05; // Fake gravity pull
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 3;
+
+        if (this.type === 'fridge') {
+            ctx.fillStyle = "#eee";
+            ctx.fillRect(-30, -50, 60, 100);
+            ctx.strokeRect(-30, -50, 60, 100);
+            ctx.beginPath(); ctx.moveTo(-30, 10); ctx.lineTo(30, 10); ctx.stroke(); // Door split
+            ctx.fillStyle = "#333";
+            ctx.fillRect(18, -35, 6, 30); // Top handle
+            ctx.fillRect(18, 20, 6, 15);  // Bottom handle
+        } 
+        else if (this.type === 'house') {
+            ctx.fillStyle = "#d35400"; // Brick
+            ctx.beginPath();
+            ctx.moveTo(-50, 50); ctx.lineTo(50, 50); ctx.lineTo(50, -10);
+            ctx.lineTo(0, -60); ctx.lineTo(-50, -10); ctx.closePath();
+            ctx.fill(); ctx.stroke();
+            // Window
+            ctx.fillStyle = "#87CEEB"; ctx.fillRect(-35, -5, 20, 20); ctx.strokeRect(-35, -5, 20, 20);
+            // Door
+            ctx.fillStyle = "#5d4037"; ctx.fillRect(10, 10, 25, 40); ctx.strokeRect(10, 10, 25, 40);
+            ctx.fillStyle = "black"; ctx.beginPath(); ctx.arc(30, 30, 3, 0, Math.PI*2); ctx.fill();
+        } 
+        else {
+            ctx.fillStyle = "#795548";
+            ctx.fillRect(-8, -80, 16, 160);
+            ctx.strokeRect(-8, -80, 16, 160);
+        }
+        ctx.restore();
+    }
+}
+
+// --- Physics Collision Engine (SAT + Impulse) ---
+function resolveCollision(o1, o2) {
+    const v1 = o1.getVertices();
+    const v2 = o2.getVertices();
+    
+    // Check for SAT overlap
+    if (polygonsIntersect(v1, v2)) {
+        // Simple Physics Fling: Swap velocities and add chaos
+        let tempVx = o1.vx;
+        let tempVy = o1.vy;
+        o1.vx = o2.vx * 1.5;
+        o1.vy = o2.vy - 2;
+        o2.vx = tempVx * 1.5;
+        o2.vy = tempVy + 2;
+        o1.va += (Math.random() - 0.5) * 0.2;
+        o2.va += (Math.random() - 0.5) * 0.2;
+    }
+}
+
+function polygonsIntersect(a, b) {
+    let polygons = [a, b];
+    for (let i = 0; i < polygons.length; i++) {
+        let polygon = polygons[i];
+        for (let i1 = 0; i1 < polygon.length; i1++) {
+            let i2 = (i1 + 1) % polygon.length;
+            let p1 = polygon[i1], p2 = polygon[i2];
+            let normal = { x: p2.y - p1.y, y: p1.x - p2.x };
+            let minA = null, maxA = null;
+            for (let j = 0; j < a.length; j++) {
+                let projected = normal.x * a[j].x + normal.y * a[j].y;
+                if (minA === null || projected < minA) minA = projected;
+                if (maxA === null || projected > maxA) maxA = projected;
+            }
+            let minB = null, maxB = null;
+            for (let j = 0; j < b.length; j++) {
+                let projected = normal.x * b[j].x + normal.y * b[j].y;
+                if (minB === null || projected < minB) minB = projected;
+                if (maxB === null || projected > maxB) maxB = projected;
+            }
+            if (maxA < minB || maxB < minA) return false;
+        }
+    }
+    return true;
+}
+
+function loop() {
+    if (gameOver) return;
+    ctx.clearRect(0, 0, width, height);
+
+    // Player Controls & Animation State
+    if (keys['KeyA'] || keys['ArrowLeft']) { player.x -= player.speed; player.dir = 'left'; }
+    if (keys['KeyD'] || keys['ArrowRight']) { player.x += player.speed; player.dir = 'right'; }
+    if (keys['KeyW'] || keys['ArrowUp']) { player.y -= player.speed; player.dir = 'up'; }
+    if (keys['KeyS'] || keys['ArrowDown']) { player.y += player.speed; player.dir = 'down'; }
+
+    drawPixelMan(ctx, player);
+
+    // Spawn
+    if (Math.random() < 0.03) obstacles.push(new Obstacle());
+
+    // Collision between obstacles (Object vs Object)
+    for (let i = 0; i < obstacles.length; i++) {
+        for (let j = i + 1; j < obstacles.length; j++) {
+            resolveCollision(obstacles[i], obstacles[j]);
+        }
+    }
+
+    // Update and Collision with Player
+    let pVerts = [{x:player.x,y:player.y},{x:player.x+player.w,y:player.y},{x:player.x+player.w,y:player.y+player.h},{x:player.x,y:player.y+player.h}];
+
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        let o = obstacles[i];
+        o.update();
+        o.draw();
+
+        if (polygonsIntersect(o.getVertices(), pVerts)) {
+            gameOver = true;
+            alert("Smashed! Score: " + score);
+            location.reload();
+        }
+
+        if (o.y > height + 300 || o.x < -200 || o.x > width + 200) {
+            obstacles.splice(i, 1);
+            score++;
+            scoreElement.innerText = score;
+        }
+    }
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
